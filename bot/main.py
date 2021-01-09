@@ -125,8 +125,8 @@ async def start_game(ctx):
     size = len(queue) // 2
     best_score = 0
     best_teams = None
-    for team1 in itertools.permutations(queue, size):
-        team1 = list(team1)
+    for team1 in itertools.combinations(queue[1:], size - 1):
+        team1 = queue[0:1] + list(team1)
         team2 = [x for x in queue if x not in team1]
         team1_rating = list(map(lambda x: state.players[x], team1))
         team2_rating = list(map(lambda x: state.players[x], team2))
