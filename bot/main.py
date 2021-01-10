@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 bot = commands.Bot(command_prefix='?')
 api = "http://localhost:5000"
 
+
 class Game:
     def __init__(self, team1, team2, id=None, score=None):
         self.team1 = team1
@@ -60,7 +61,11 @@ def update_game(game):
     requests.put(f"{api}/games", json=d)
 
 
-def get_rating(player):
+def get_rating(player_id):
+    try:
+        player = state.players[player_id]
+    except:
+        player = trueskill.Rating()
     return player.mu - 2 * player.sigma
 
 
@@ -126,30 +131,28 @@ async def start_game(ctx):
     best_score = 0
     best_teams = None
     for team1 in itertools.combinations(queue[1:], size - 1):
-        team1 = queue[0:1] + list(team1)
+        team1 = queue[:1] + list(team1)
         team2 = [x for x in queue if x not in team1]
-        team1_rating = list(map(lambda x: state.players[x], team1))
-        team2_rating = list(map(lambda x: state.players[x], team2))
+        team1_rating = list(map(lambda x: get_rating(x), team1))
+        team2_rating = list(map(lambda x: get_rating(x), team2))
         score = trueskill.quality([team1_rating, team2_rating])
         if score > best_score:
             best_score = score
-            best_teams = list(map(lambda x: (x, 1), team1)) + \
-                list(map(lambda x: (x, 2), team2))
+            best_teams = (team1, team2)
+    team1, team2 = best_teams
     create_game(Game(team1, team2))
     mentions = ""
     description = "Team 1:\n"
-    for player in best_teams[:size]:
-        rating = state.players[player[0]]
-        description += "{} {:.2f}\n".format(
-            get_name(player[0]), get_rating(rating))
-        mentions += "{} ".format(get_name(player[0]))
+    for player in team1:
+        name = get_name(player)
+        description += "{} {:.2f}\n".format(name, get_rating(player))
+        mentions += "{} ".format(name)
     description += "\nTeam 2:\n"
-    for player in best_teams[size:]:
-        rating = state.players[player[0]]
-        description += "{} {:.2f}\n".format(get_name(
-            player[0]), rating.mu - 2 * rating.sigma)
-        mentions += "{} ".format(get_name(player[0]))
-    title = f"Game #%d started" % state.id
+    for player in team2:
+        name = get_name(player)
+        description += "{} {:.2f}\n".format(name, get_rating(player))
+        mentions += "{} ".format(name)
+    title = "Game #{} started".format(state.id)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(mentions, embed=embed)
 
@@ -166,7 +169,7 @@ async def join(ctx):
         await start_game(ctx)
     else:
         title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(state.players[ctx.author.id]))
+            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(ctx.author.id))
         embed = discord.Embed(description=title)
         await ctx.send(embed=embed)
 
@@ -178,7 +181,7 @@ async def leave(ctx):
     try:
         state.queue.remove(ctx.author.id)
         description = "[{}/{}] {} ({:.2f}) left the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(state.players[ctx.author.id]))
+            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(ctx.author.id))
         embed = discord.Embed(description=description)
         await ctx.send(embed=embed)
     except KeyError:
@@ -195,7 +198,7 @@ async def players(ctx, n: int):
         await ctx.send("First argument must be greater than 1.")
         return
     state.team_size = n
-    await ctx.send(f"Players per team set to %d." % n)
+    await ctx.send(f"Players per team set to {n}.")
     if len(state.queue) == 2 * state.team_size:
         await start_game(ctx)
 
@@ -229,7 +232,7 @@ async def leaderboard(ctx, page=1):
     if ctx.channel.id not in state.allowed_channels:
         return
     players = list(
-        map(lambda x: (x[0], get_rating(x[1])), state.players.items()))
+        map(lambda x: (x, get_rating(x)), state.players.keys()))
     players = sorted(players, key=lambda x: -x[1])
     start = 20 * (page - 1)
     if start >= len(state.players) or start < 0:
@@ -334,7 +337,7 @@ async def info(ctx, user: discord.User = None):
 @bot.command()
 async def gamelist(ctx, user: discord.User = None):
     if user:
-        title = f"{user.display_name}'s last games"
+        title = "{}'s last games".format(user.display_name)
         last_games = get_games(user.id)[-20:][::-1]
         description = ""
         for game in last_games:
