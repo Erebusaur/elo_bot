@@ -222,7 +222,21 @@ async def score(ctx, id: int, team: str):
     else:
         await ctx.send("Score must be 1, 2 or draw.")
         return
-    game["result"] = result
+    game["score"] = result
+    update_game(game)
+    init_players()
+
+@bot.command(aliases=['cancel'])
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def cancelgame(ctx, id: int):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    try:
+        game = get_game_by_id(id)
+    except:
+        await ctx.send("This game does not exist.")
+        return
+    game["score"] = 'C'
     update_game(game)
     init_players()
 
@@ -271,6 +285,8 @@ async def _info(ctx, game):
         winner = "team 2"
     elif score == "D":
         winner = "draw"
+    elif score == "C":
+        winner = "cancelled"
     description = "Winner: {}\n\nTeam 1:".format(winner)
     for player in game["team1"]:
         description += "\n{}".format(get_name(player))
@@ -359,6 +375,8 @@ async def gamelist(ctx, user: discord.User = None):
                     result = "loss"
             elif score == "D":
                 result = "draw"
+            elif score == "C":
+                result = "cancelled"
             description += "Game #{}: {}\n".format(id, result)
     else:
         title = "Last games"
@@ -370,14 +388,15 @@ async def gamelist(ctx, user: discord.User = None):
             except:
                 score = None
             id = game["id"]
+            result = "undecided"
             if score == "1":
                 result = "team 1"
             elif score == "2":
                 result = "team 2"
             elif score == "D":
                 result = "draw"
-            else:
-                result = "undecided"
+            elif score == "C":
+                result = "cancelled"
             description += "Game #{}: {}\n".format(id, result)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)

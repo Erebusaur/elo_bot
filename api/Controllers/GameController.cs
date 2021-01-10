@@ -152,6 +152,10 @@ namespace Controllers
             {
                 result = 0.5f;
             }
+            else if (game.Score == 'C')
+            {
+                result = -1;
+            }
             scoreContext.Add(new Score
             {
                 GameId = id,
