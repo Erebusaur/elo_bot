@@ -1,1 +1,1 @@
-cd api && start /b dotnet run
+cd api && dotnet run

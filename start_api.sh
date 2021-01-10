@@ -1,2 +1,2 @@
 #!/bin/sh
-cd api && nohup dotnet run &
+cd api && nohup dotnet run
