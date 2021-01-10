@@ -75,7 +75,8 @@ class State:
         self.queue = set()
         self.team_size = 4
         self.id = get_last_game()["id"]
-        self.allowed_channels = [753208659865108561, 790660886242787369]
+        self.allowed_channels = [753208659865108561,
+                                 790660886242787369, 739093044346748948]
 
 
 state = State()
