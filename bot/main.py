@@ -226,6 +226,7 @@ async def score(ctx, id: int, team: str):
     update_game(game)
     init_players()
 
+
 @bot.command(aliases=['cancel'])
 @commands.has_any_role('Scrim Organiser', 'Moderator')
 async def cancelgame(ctx, id: int):
@@ -299,18 +300,24 @@ async def _info(ctx, game):
 
 @bot.command()
 async def lastgame(ctx):
+    if ctx.channel.id not in state.allowed_channels:
+        return
     game = get_last_game()
     await _info(ctx, game)
 
 
 @bot.command()
 async def gameinfo(ctx, id: int):
+    if ctx.channel.id not in state.allowed_channels:
+        return
     game = get_game_by_id(id)
     await _info(ctx, game)
 
 
 @bot.command()
 async def info(ctx, user: discord.User = None):
+    if ctx.channel.id not in state.allowed_channels:
+        return
     if not user:
         user = ctx.author
     games = get_games(user.id)
@@ -352,6 +359,8 @@ async def info(ctx, user: discord.User = None):
 
 @bot.command()
 async def gamelist(ctx, user: discord.User = None):
+    if ctx.channel.id not in state.allowed_channels:
+        return
     if user:
         title = "{}'s last games".format(user.display_name)
         last_games = get_games(user.id)[-20:][::-1]
@@ -400,6 +409,74 @@ async def gamelist(ctx, user: discord.User = None):
             description += "Game #{}: {}\n".format(id, result)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
+
+
+@bot.command()
+async def stats(ctx):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    games = get_games()
+    total_games = len(games)
+    draws = 0
+    cancelled = 0
+    ongoing = 0
+    for game in games:
+        try:
+            score = game["score"]
+        except:
+            score = None
+        if score == "C":
+            cancelled_games += 1
+        elif score == "D":
+            draws += 1
+        elif not score:
+            ongoing += 1
+    title = "Stats"
+    description = "Total games: {}\n".format(total_games)
+    description += "Games played: {}\n".format(
+        total_games - cancelled - ongoing)
+    description += "Cancelled games: {}\n".format(cancelled)
+    description += "Ongoing games: {}\n".format(ongoing)
+    description += "Draws: {}\n".format(draws)
+    embed = discord.Embed(title=title, description=description)
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def swap(ctx, user1: discord.User, user2: discord.User):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    game = get_last_game()
+    print(game)
+    team1 = game["team1"]
+    team2 = game["team2"]
+    if user1.id in team1:
+        if user2.id in team1:
+            await ctx.send("These players are on the same team.")
+            return
+        elif user2.id in team2:
+            team1 = [x if x != user1.id else user2.id for x in team1]
+            team2 = [x if x != user2.id else user1.id for x in team2]
+        else:
+            team1 = [x if x != user1.id else user2.id for x in team1]
+    elif user1.id in team2:
+        if user2.id in team2:
+            await ctx.send("These players are on the same team.")
+            return
+        elif user2.id in team1:
+            team1 = [x if x != user2.id else user1.id for x in team1]
+            team2 = [x if x != user1.id else user2.id for x in team2]
+        else:
+            team2 = [x if x != user1.id else user2.id for x in team2]
+    else:
+        await ctx.send("{} is not playing.".format(user1.display_name))
+        return
+    game["team1"] = team1
+    game["team2"] = team2
+    update_game(game)
+    await ctx.send("Players swapped.")
+    if game["score"] in ["1", "2", "D"]:
+        init_players()
 
 
 def get_name(user_id):
