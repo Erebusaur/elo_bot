@@ -190,6 +190,7 @@ async def leave(ctx):
         return
 
 
+@bot.command()
 @commands.has_any_role('Scrim Organiser', 'Moderator')
 async def forceremove(ctx, user: discord.User):
     if ctx.channel.id not in state.allowed_channels:
