@@ -28,6 +28,8 @@ In bot, rename .env.example to .env and write the discord token of your bot next
 
 ## Run
 
+Before the first execution, run `init.bat` to create the database. Do not run if afterwards as if will overwrite the old database.
+
 Start the api first: `start_api.bat`
 
 Then start the bot: `start_bot.bat`
