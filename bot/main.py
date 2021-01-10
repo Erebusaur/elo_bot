@@ -190,6 +190,22 @@ async def leave(ctx):
         return
 
 
+@bot.command(aliases=['l'])
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def forceremove(ctx, user: discord.User):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    try:
+        state.queue.remove(user.id)
+        description = "[{}/{}] {} ({:.2f}) left the queue.".format(
+            len(state.queue), 2 * state.team_size, get_name(user.id), get_rating(ctx.author.id))
+        embed = discord.Embed(description=description)
+        await ctx.send(embed=embed)
+    except KeyError:
+        await ctx.send("This user is not in the queue.")
+        return
+
+
 @bot.command()
 @commands.has_any_role('Scrim Organiser', 'Moderator')
 async def players(ctx, n: int):
