@@ -8,124 +8,14 @@ import trueskill
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from state import State
+from api import Api
+from game import Game
+from player import Player
+
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix='?', intents=intents)
-api = "http://localhost:5000"
-
-
-class Game:
-    def __init__(self, team1, team2, id=None, score=None):
-        self.team1 = team1
-        self.team2 = team2
-        self.id = id
-        self.score = score
-
-    def to_dict(self):
-        d = {}
-        d["team1"] = self.team1
-        d["team2"] = self.team2
-        if self.id:
-            d["id"] = self.id
-        if self.score:
-            d["score"] = self.score
-        return d
-
-
-def get_games(player_id: int = None):
-    if player_id:
-        games = requests.get(f"{api}/games?player={player_id}").json()
-    else:
-        games = requests.get(f"{api}/games").json()
-    return games
-
-
-def get_game_by_id(game_id: int):
-    game = requests.get(f"{api}/games/{game_id}").json()
-    return game
-
-
-def get_last_game():
-    game = requests.get(f"{api}/games/last").json()
-    return game
-
-
-def create_game(game: Game):
-    print(game.to_dict())
-    requests.post(f"{api}/games", json=game.to_dict())
-
-
-def update_game(game):
-    try:
-        d = game.to_dict()
-    except:
-        d = game
-    requests.put(f"{api}/games", json=d)
-
-
-def player_rating(player_id):
-    try:
-        return state.ratings[player_id]
-    except:
-        return trueskill.Rating()
-
-
-def get_rating(player_id):
-    try:
-        player = state.ratings[player_id]
-    except:
-        player = trueskill.Rating()
-    return player.mu - 2 * player.sigma
-
-
-class State:
-    def __init__(self):
-        self.ratings = {}
-        self.queue = set()
-        self.team_size = 4
-        self.id = get_last_game()["id"]
-        self.allowed_channels = [753208659865108561,
-                                 790660886242787369, 739093044346748948]
-        self.calc_ratings()
-
-    def calc_ratings(self):
-        ratings = {}
-        games = get_games()
-        for game in games:
-            ratings = update_ratings(ratings, game)
-        self.ratings = ratings
-
-
-def update_ratings(ratings, game):
-    try:
-        score = game["score"]
-    except:
-        return ratings
-    if score == '1':
-        ranks = [0, 1]
-    elif score == '2':
-        ranks = [1, 0]
-    elif score == 'D':
-        ranks = [0, 0]
-    else:
-        return ratings
-    team1 = game["team1"]
-    team2 = game["team2"]
-    for player in team1:
-        if not player in ratings:
-            ratings[player] = trueskill.Rating()
-    for player in team2:
-        if not player in ratings:
-            ratings[player] = trueskill.Rating()
-    team1_ratings = list(map(lambda x: ratings[x], team1))
-    team2_ratings = list(map(lambda x: ratings[x], team2))
-    team1_ratings, team2_ratings = trueskill.rate(
-        [team1_ratings, team2_ratings], ranks=ranks)
-    for i, player in enumerate(team1):
-        ratings[player] = team1_ratings[i]
-    for i, player in enumerate(team2):
-        ratings[player] = team2_ratings[i]
-    return ratings
 
 
 @bot.event
@@ -138,84 +28,95 @@ async def start_game(ctx):
         return
     queue = list(state.queue)
     state.queue = set()
-    state.id += 1
-    size = len(queue) // 2
+    size = state.team_size
     best_score = 0
     best_teams = None
     for team1 in itertools.combinations(queue[1:], size - 1):
         team1 = queue[:1] + list(team1)
         team2 = [x for x in queue if x not in team1]
-        team1_rating = list(map(lambda x: player_rating(x), team1))
-        team2_rating = list(map(lambda x: player_rating(x), team2))
+        team1_rating = list(map(lambda id: state.get_rating(id), team1))
+        team2_rating = list(map(lambda id: state.get_rating(id), team2))
         score = trueskill.quality([team1_rating, team2_rating])
         if score > best_score:
             best_score = score
             best_teams = (team1, team2)
     team1, team2 = best_teams
-    create_game(Game(team1, team2))
+    api.create_game(Game(team1, team2))
     mentions = ""
     description = "Team 1:\n"
-    for player in team1:
-        name = get_name(player)
-        description += "{} {:.2f}\n".format(name, get_rating(player))
+    for player_id in team1:
+        name = ctx.guild.get_member(player_id).mention
+        rating = state.get_conservative_rating(player_id)
+        description += "{} {:.2f}\n".format(name, rating)
         mentions += "{} ".format(name)
     description += "\nTeam 2:\n"
-    for player in team2:
-        name = get_name(player)
-        description += "{} {:.2f}\n".format(name, get_rating(player))
+    for player_id in team2:
+        name = ctx.guild.get_member(player_id).mention
+        rating = state.get_conservative_rating(player_id)
+        description += "{} {:.2f}\n".format(name, rating)
         mentions += "{} ".format(name)
-    title = "Game #{} started".format(state.id)
+    last_game = api.get_last_game()
+    if last_game:
+        id = last_game.id + 1
+    else:
+        id = 1
+    title = "Game #{} started".format(id)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(mentions, embed=embed)
+
+
+async def add_player(ctx, player: discord.User):
+    name = player.mention
+    try:
+        state.add_queue(player.id)
+    except KeyError:
+        await ctx.send(f"{name} is already in the queue.")
+        return
+    rating = state.get_conservative_rating(player.id)
+    title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
+        len(state.queue), 2 * state.team_size, name, rating)
+    embed = discord.Embed(description=title)
+    await ctx.send(embed=embed)
+    if len(state.queue) == 2 * state.team_size:
+        await start_game(ctx)
 
 
 @bot.command(aliases=['j'])
 async def join(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    if ctx.author.id in state.queue:
-        await ctx.send("You are already in the queue.")
-        return
-    state.queue.add(ctx.author.id)
-    if len(state.queue) == 2 * state.team_size:
-        await start_game(ctx)
-    else:
-        title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(ctx.author.id))
-        embed = discord.Embed(description=title)
-        await ctx.send(embed=embed)
+    await add_player(ctx, ctx.author)
+
 
 @bot.command()
 @commands.has_any_role('Scrim Organiser', 'Moderator')
 async def forcejoin(ctx, user: discord.User):
     if ctx.channel.id not in state.allowed_channels:
         return
-    if user.id in state.queue:
-        await ctx.send("This user is already in the queue.")
+    await add_player(ctx, user)
+
+
+async def remove_player(ctx, player: discord.User):
+    name = player.mention
+    try:
+        state.remove_queue(player.id)
+    except KeyError:
+        await ctx.send(f"{name} is not in the queue.")
         return
-    state.queue.add(user.id)
+    rating = state.get_conservative_rating(player.id)
+    description = "[{}/{}] {} ({:.2f}) left the queue.".format(
+        len(state.queue), 2 * state.team_size, name, rating)
+    embed = discord.Embed(description=description)
+    await ctx.send(embed=embed)
     if len(state.queue) == 2 * state.team_size:
         await start_game(ctx)
-    else:
-        title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(user.id), get_rating(ctx.author.id))
-        embed = discord.Embed(description=title)
-        await ctx.send(embed=embed)
 
 
 @bot.command(aliases=['l'])
 async def leave(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    try:
-        state.queue.remove(ctx.author.id)
-        description = "[{}/{}] {} ({:.2f}) left the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(ctx.author.id))
-        embed = discord.Embed(description=description)
-        await ctx.send(embed=embed)
-    except KeyError:
-        await ctx.send("You are not in the queue.")
-        return
+    await remove_player(ctx, ctx.author)
 
 
 @bot.command()
@@ -223,15 +124,7 @@ async def leave(ctx):
 async def forceremove(ctx, user: discord.User):
     if ctx.channel.id not in state.allowed_channels:
         return
-    try:
-        state.queue.remove(user.id)
-        description = "[{}/{}] {} ({:.2f}) left the queue.".format(
-            len(state.queue), 2 * state.team_size, get_name(user.id), get_rating(ctx.author.id))
-        embed = discord.Embed(description=description)
-        await ctx.send(embed=embed)
-    except KeyError:
-        await ctx.send("This user is not in the queue.")
-        return
+    await remove_player(ctx, user)
 
 
 @bot.command()
@@ -253,9 +146,8 @@ async def players(ctx, n: int):
 async def score(ctx, id: int, team: str):
     if ctx.channel.id not in state.allowed_channels:
         return
-    try:
-        game = get_game_by_id(id)
-    except:
+    game = api.get_game_by_id(id)
+    if not game:
         await ctx.send("This game does not exist.")
         return
     if team == '1':
@@ -267,9 +159,9 @@ async def score(ctx, id: int, team: str):
     else:
         await ctx.send("Score must be 1, 2 or draw.")
         return
-    game["score"] = result
-    update_game(game)
-    state.calc_ratings()
+    game.score = result
+    api.update_game(game)
+    state.update_players()
 
 
 @bot.command(aliases=['cancel'])
@@ -277,14 +169,13 @@ async def score(ctx, id: int, team: str):
 async def cancelgame(ctx, id: int):
     if ctx.channel.id not in state.allowed_channels:
         return
-    try:
-        game = get_game_by_id(id)
-    except:
+    game = api.get_game_by_id(id)
+    if not game:
         await ctx.send("This game does not exist.")
         return
     game["score"] = 'C'
-    update_game(game)
-    state.calc_ratings()
+    api.update_game(game)
+    state.update_players()
 
 
 @bot.command(aliases=['lb'])
@@ -292,7 +183,7 @@ async def leaderboard(ctx, page=1):
     if ctx.channel.id not in state.allowed_channels:
         return
     players = list(
-        filter(lambda x: x[0], map(lambda x: (ctx.guild.get_member(x), get_rating(x)), state.ratings.keys())))
+        filter(lambda x: x[0], map(lambda x: (ctx.guild.get_member(x), state.get_conservative_rating(x)), state.players.keys())))
     players = sorted(players, key=lambda x: -x[1])
     pages = math.ceil(len(players) / 20)
     if page > pages:
@@ -300,8 +191,6 @@ async def leaderboard(ctx, page=1):
     start = 20 * (page - 1)
     description = ""
     for (i, player) in enumerate(players[start:start+20], start + 1):
-        # name = get_name(player[0])
-        # name = bot.get_user(player[0])
         name = player[0]
         description += "{}: {} - `{:.2f}`\n".format(
             i, name.mention, player[1])
@@ -314,33 +203,41 @@ async def leaderboard(ctx, page=1):
 async def queue(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    title = "Queue [{}/{}]".format(len(state.queue),
-                                   2 * state.team_size)
-    description = "Game #{}\n".format(state.id + 1)
-    for player in state.queue:
-        description += "{}\n".format(get_name(player))
+    last_game = api.get_last_game()
+    if last_game:
+        id = last_game.id + 1
+    else:
+        id = 1
+    title = "Game #{} [{}/{}]".format(id, len(state.queue),
+                                      2 * state.team_size)
+    description = ""
+    for player_id in state.queue:
+        name = ctx.guild.get_member(player_id).mention
+        rating = state.get_conservative_rating(player_id)
+        description += "{} ({:.2f})\n".format(name, rating)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
 
-async def _info(ctx, game):
-    score = game["score"]
-    title = "Game #{}".format(game["id"])
+async def _gameinfo(ctx, game: Game):
+    title = "Game #{}".format(game.id)
     winner = "undecided"
-    if score == "1":
+    if game.score == "1":
         winner = "team 1"
-    elif score == "2":
+    elif game.score == "2":
         winner = "team 2"
-    elif score == "D":
+    elif game.score == "D":
         winner = "draw"
-    elif score == "C":
+    elif game.score == "C":
         winner = "cancelled"
     description = "Winner: {}\n\nTeam 1:".format(winner)
-    for player in game["team1"]:
-        description += "\n{}".format(get_name(player))
+    for player in game.team1:
+        name = "<@" + str(player) + ">"
+        description += "\n{}".format(name)
     description += "\n\nTeam 2:"
-    for player in game["team2"]:
-        description += "\n{}".format(get_name(player))
+    for player in game.team2:
+        name = "<@" + str(player) + ">"
+        description += "\n{}".format(name)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
@@ -349,16 +246,22 @@ async def _info(ctx, game):
 async def lastgame(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = get_last_game()
-    await _info(ctx, game)
+    game = api.get_last_game()
+    if not game:
+        await ctx.send("No game was played.")
+        return
+    await _gameinfo(ctx, game)
 
 
 @bot.command()
 async def gameinfo(ctx, id: int):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = get_game_by_id(id)
-    await _info(ctx, game)
+    game = api.get_game_by_id(id)
+    if not game:
+        await ctx.send("This game does not exist.")
+        return
+    await _gameinfo(ctx, game)
 
 
 @bot.command()
@@ -367,32 +270,27 @@ async def info(ctx, user: discord.User = None):
         return
     if not user:
         user = ctx.author
-    games = get_games(user.id)
+    games = api.get_games(user.id)
     wins = 0
     losses = 0
     draws = 0
     for game in games:
-        score = game["score"]
-        if score == "1":
-            if user.id in game["team1"]:
+        if game.score == "1":
+            if user.id in game.team1:
                 wins += 1
             else:
                 losses += 1
-        elif score == "2":
-            if user.id in game["team2"]:
+        elif game.score == "2":
+            if user.id in game.team2:
                 wins += 1
             else:
                 losses += 1
-        elif score == "D":
+        elif game.score == "D":
             draws += 1
-    try:
-        rating = state.ratings[user.id]
-        mu = rating.mu
-        sigma = rating.sigma
-    except KeyError:
-        mu = 25
-        sigma = 25 / 3
-    rating = mu - 2 * sigma
+    rating = state.get_rating(user.id)
+    mu = rating.mu
+    sigma = rating.sigma
+    rating = state.get_conservative_rating(user.id)
     title = "{}'s stats".format(user.display_name)
     description = "Rating: {:.2f} ({:.2f}±{:.2f})\n".format(
         rating, mu, sigma)
@@ -410,50 +308,40 @@ async def gamelist(ctx, user: discord.User = None):
         return
     if user:
         title = "{}'s last games".format(user.display_name)
-        last_games = get_games(user.id)[-20:][::-1]
+        last_games = api.get_games(user.id)[-20:][::-1]
         description = ""
         for game in last_games:
-            try:
-                score = game["score"]
-            except:
-                score = None
-            id = game["id"]
             result = "undecided"
-            if score == "1":
-                if user.id in game["team1"]:
+            if game.score == "1":
+                if user.id in game.team1:
                     result = "win"
                 else:
                     result = "loss"
-            elif score == "2":
-                if user.id in game["team2"]:
+            elif game.score == "2":
+                if user.id in game.team2:
                     result = "win"
                 else:
                     result = "loss"
-            elif score == "D":
+            elif game.score == "D":
                 result = "draw"
-            elif score == "C":
+            elif game.score == "C":
                 result = "cancelled"
-            description += "Game #{}: {}\n".format(id, result)
+            description += "Game #{}: {}\n".format(game.id, result)
     else:
         title = "Last games"
-        last_games = get_games()[-20:][::-1]
+        last_games = api.get_games()[-20:][::-1]
         description = ""
         for game in last_games:
-            try:
-                score = game["score"]
-            except:
-                score = None
-            id = game["id"]
             result = "undecided"
-            if score == "1":
+            if game.score == "1":
                 result = "team 1"
-            elif score == "2":
+            elif game.score == "2":
                 result = "team 2"
-            elif score == "D":
+            elif game.score == "D":
                 result = "draw"
-            elif score == "C":
+            elif game.score == "C":
                 result = "cancelled"
-            description += "Game #{}: {}\n".format(id, result)
+            description += "Game #{}: {}\n".format(game.id, result)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
@@ -462,21 +350,17 @@ async def gamelist(ctx, user: discord.User = None):
 async def stats(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    games = get_games()
+    games = api.get_games()
     total_games = len(games)
     draws = 0
     cancelled = 0
     ongoing = 0
     for game in games:
-        try:
-            score = game["score"]
-        except:
-            score = None
-        if score == "C":
+        if game.score == "C":
             cancelled_games += 1
-        elif score == "D":
+        elif game.score == "D":
             draws += 1
-        elif not score:
+        elif not game.score:
             ongoing += 1
     title = "Stats"
     description = "Total games: {}\n".format(total_games)
@@ -484,7 +368,7 @@ async def stats(ctx):
         total_games - cancelled - ongoing)
     description += "Cancelled games: {}\n".format(cancelled)
     description += "Ongoing games: {}\n".format(ongoing)
-    description += "Draws: {}\n".format(draws)
+    # description += "Draws: {}\n".format(draws)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
@@ -493,36 +377,32 @@ async def stats(ctx):
 async def swap(ctx, user1: discord.User, user2: discord.User):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = get_last_game()
-    team1 = game["team1"]
-    team2 = game["team2"]
-    if user1.id in team1:
-        if user2.id in team1:
+    game = api.get_last_game()
+    if user1.id in game.team1:
+        if user2.id in game.team1:
             await ctx.send("These players are on the same team.")
             return
-        elif user2.id in team2:
-            team1 = [x if x != user1.id else user2.id for x in team1]
-            team2 = [x if x != user2.id else user1.id for x in team2]
+        elif user2.id in game.team2:
+            game.team1 = [x if x != user1.id else user2.id for x in game.team1]
+            game.team2 = [x if x != user2.id else user1.id for x in game.team2]
         else:
-            team1 = [x if x != user1.id else user2.id for x in team1]
-    elif user1.id in team2:
-        if user2.id in team2:
+            game.team1 = [x if x != user1.id else user2.id for x in game.team1]
+    elif user1.id in game.team2:
+        if user2.id in game.team2:
             await ctx.send("These players are on the same team.")
             return
-        elif user2.id in team1:
-            team1 = [x if x != user2.id else user1.id for x in team1]
-            team2 = [x if x != user1.id else user2.id for x in team2]
+        elif user2.id in game.team1:
+            game.team1 = [x if x != user2.id else user1.id for x in game.team1]
+            game.team2 = [x if x != user1.id else user2.id for x in game.team2]
         else:
-            team2 = [x if x != user1.id else user2.id for x in team2]
+            game.team2 = [x if x != user1.id else user2.id for x in game.team2]
     else:
-        await ctx.send("{} is not playing.".format(user1.display_name))
+        await ctx.send("{} is not playing.".format(user1.mention))
         return
-    game["team1"] = team1
-    game["team2"] = team2
-    update_game(game)
+    api.update_game(game)
     await ctx.send("Players swapped.")
-    if game["score"] in ["1", "2", "D"]:
-        state.calc_ratings()
+    if game.score in ["1", "2", "D"]:
+        state.update_players()
 
 
 def get_name(user_id):
@@ -530,12 +410,7 @@ def get_name(user_id):
 
 
 load_dotenv()
-while True:
-    try:
-        requests.get(api)
-        break
-    except:
-        print("Could not connect to the api, retrying in 1 second.")
-        time.sleep(1)
-state = State()
+api = Api("http://localhost:5000")
+state = State(api)
+state.update_players()
 bot.run(os.getenv('DISCORD_TOKEN'))
