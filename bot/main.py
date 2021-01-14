@@ -8,7 +8,9 @@ import trueskill
 from discord.ext import commands
 from dotenv import load_dotenv
 
-bot = commands.Bot(command_prefix='?')
+intents = discord.Intents.default()
+intents.members = True
+bot = commands.Bot(command_prefix='?', intents=intents)
 api = "http://localhost:5000"
 
 
@@ -61,9 +63,16 @@ def update_game(game):
     requests.put(f"{api}/games", json=d)
 
 
+def player_rating(player_id):
+    try:
+        return state.ratings[player_id]
+    except:
+        return trueskill.Rating()
+
+
 def get_rating(player_id):
     try:
-        player = state.players[player_id]
+        player = state.ratings[player_id]
     except:
         player = trueskill.Rating()
     return player.mu - 2 * player.sigma
@@ -71,50 +80,52 @@ def get_rating(player_id):
 
 class State:
     def __init__(self):
-        self.players = {}
+        self.ratings = {}
         self.queue = set()
         self.team_size = 4
         self.id = get_last_game()["id"]
         self.allowed_channels = [753208659865108561,
                                  790660886242787369, 739093044346748948]
+        self.calc_ratings()
+
+    def calc_ratings(self):
+        ratings = {}
+        games = get_games()
+        for game in games:
+            ratings = update_ratings(ratings, game)
+        self.ratings = ratings
 
 
-state = State()
-
-
-def init_players():
-    state.players = {}
-    games = get_games()
-    for game in games:
-        team1 = game["team1"]
-        team2 = game["team2"]
-        score = None
-        try:
-            score = game["score"]
-        except:
-            pass
-        for player in team1:
-            if not player in state.players:
-                state.players[player] = trueskill.Rating()
-        for player in team2:
-            if not player in state.players:
-                state.players[player] = trueskill.Rating()
-        team1_rating = list(map(lambda x: state.players[x], team1))
-        team2_rating = list(map(lambda x: state.players[x], team2))
-        if score == "1":
-            ranks = [0, 1]
-        elif score == "2":
-            ranks = [1, 0]
-        elif score == "D":
-            ranks = [0, 0]
-        else:
-            continue
-        team1_rating, team2_rating = trueskill.rate(
-            [team1_rating, team2_rating], ranks=ranks)
-        for i, player_id in enumerate(team1):
-            state.players[player_id] = team1_rating[i]
-        for i, player_id in enumerate(team2):
-            state.players[player_id] = team2_rating[i]
+def update_ratings(ratings, game):
+    try:
+        score = game["score"]
+    except:
+        return ratings
+    if score == '1':
+        ranks = [0, 1]
+    elif score == '2':
+        ranks = [1, 0]
+    elif score == 'D':
+        ranks = [0, 0]
+    else:
+        return ratings
+    team1 = game["team1"]
+    team2 = game["team2"]
+    for player in team1:
+        if not player in ratings:
+            ratings[player] = trueskill.Rating()
+    for player in team2:
+        if not player in ratings:
+            ratings[player] = trueskill.Rating()
+    team1_ratings = list(map(lambda x: ratings[x], team1))
+    team2_ratings = list(map(lambda x: ratings[x], team2))
+    team1_ratings, team2_ratings = trueskill.rate(
+        [team1_ratings, team2_ratings], ranks=ranks)
+    for i, player in enumerate(team1):
+        ratings[player] = team1_ratings[i]
+    for i, player in enumerate(team2):
+        ratings[player] = team2_ratings[i]
+    return ratings
 
 
 @bot.event
@@ -134,8 +145,8 @@ async def start_game(ctx):
     for team1 in itertools.combinations(queue[1:], size - 1):
         team1 = queue[:1] + list(team1)
         team2 = [x for x in queue if x not in team1]
-        team1_rating = list(map(lambda x: get_rating(x), team1))
-        team2_rating = list(map(lambda x: get_rating(x), team2))
+        team1_rating = list(map(lambda x: player_rating(x), team1))
+        team2_rating = list(map(lambda x: player_rating(x), team2))
         score = trueskill.quality([team1_rating, team2_rating])
         if score > best_score:
             best_score = score
@@ -171,6 +182,23 @@ async def join(ctx):
     else:
         title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
             len(state.queue), 2 * state.team_size, get_name(ctx.author.id), get_rating(ctx.author.id))
+        embed = discord.Embed(description=title)
+        await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def forcejoin(ctx, user: discord.User):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    if user.id in state.queue:
+        await ctx.send("This user is already in the queue.")
+        return
+    state.queue.add(user.id)
+    if len(state.queue) == 2 * state.team_size:
+        await start_game(ctx)
+    else:
+        title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
+            len(state.queue), 2 * state.team_size, get_name(user.id), get_rating(ctx.author.id))
         embed = discord.Embed(description=title)
         await ctx.send(embed=embed)
 
@@ -241,7 +269,7 @@ async def score(ctx, id: int, team: str):
         return
     game["score"] = result
     update_game(game)
-    init_players()
+    state.calc_ratings()
 
 
 @bot.command(aliases=['cancel'])
@@ -256,7 +284,7 @@ async def cancelgame(ctx, id: int):
         return
     game["score"] = 'C'
     update_game(game)
-    init_players()
+    state.calc_ratings()
 
 
 @bot.command(aliases=['lb'])
@@ -264,19 +292,21 @@ async def leaderboard(ctx, page=1):
     if ctx.channel.id not in state.allowed_channels:
         return
     players = list(
-        map(lambda x: (x, get_rating(x)), state.players.keys()))
+        filter(lambda x: x[0], map(lambda x: (ctx.guild.get_member(x), get_rating(x)), state.ratings.keys())))
     players = sorted(players, key=lambda x: -x[1])
-    start = 20 * (page - 1)
-    if start >= len(state.players) or start < 0:
+    pages = math.ceil(len(players) / 20)
+    if page > pages:
         return
+    start = 20 * (page - 1)
     description = ""
-    for (i, player) in enumerate(players[20 * (page - 1):], 1):
-        if i > 20:
-            break
-        name = get_name(player[0])
-        description += "{}: {} - `{:.2f}`\n".format(20 *
-                                                    (page - 1) + i, name, player[1])
-    embed = discord.Embed(title="Leaderboard", description=description)
+    for (i, player) in enumerate(players[start:start+20], start + 1):
+        # name = get_name(player[0])
+        # name = bot.get_user(player[0])
+        name = player[0]
+        description += "{}: {} - `{:.2f}`\n".format(
+            i, name.mention, player[1])
+    embed = discord.Embed(
+        title=f"Leaderboard ({page}/{pages})", description=description)
     await ctx.send(embed=embed)
 
 
@@ -356,7 +386,7 @@ async def info(ctx, user: discord.User = None):
         elif score == "D":
             draws += 1
     try:
-        rating = state.players[user.id]
+        rating = state.ratings[user.id]
         mu = rating.mu
         sigma = rating.sigma
     except KeyError:
@@ -464,7 +494,6 @@ async def swap(ctx, user1: discord.User, user2: discord.User):
     if ctx.channel.id not in state.allowed_channels:
         return
     game = get_last_game()
-    print(game)
     team1 = game["team1"]
     team2 = game["team2"]
     if user1.id in team1:
@@ -493,14 +522,13 @@ async def swap(ctx, user1: discord.User, user2: discord.User):
     update_game(game)
     await ctx.send("Players swapped.")
     if game["score"] in ["1", "2", "D"]:
-        init_players()
+        state.calc_ratings()
 
 
 def get_name(user_id):
     return "<@" + str(user_id) + ">"
 
 
-init_players()
 load_dotenv()
 while True:
     try:
@@ -509,4 +537,5 @@ while True:
     except:
         print("Could not connect to the api, retrying in 1 second.")
         time.sleep(1)
+state = State()
 bot.run(os.getenv('DISCORD_TOKEN'))
