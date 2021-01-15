@@ -41,28 +41,43 @@ async def start_game(ctx):
             best_score = score
             best_teams = (team1, team2)
     team1, team2 = best_teams
-    api.create_game(Game(team1, team2))
+    state.api.create_game(Game(team1, team2))
     mentions = ""
     description = "Team 1:\n"
     for player_id in team1:
-        name = ctx.guild.get_member(player_id).mention
+        member = ctx.guild.get_member(player_id)
+        name = member.mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} {:.2f}\n".format(name, rating)
+        description += "{} {}\n".format(name, rating)
         mentions += "{} ".format(name)
     description += "\nTeam 2:\n"
     for player_id in team2:
-        name = ctx.guild.get_member(player_id).mention
+        member = ctx.guild.get_member(player_id)
+        name = member.mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} {:.2f}\n".format(name, rating)
+        description += "{} {}\n".format(name, rating)
         mentions += "{} ".format(name)
-    last_game = api.get_last_game()
+    last_game = state.api.get_last_game()
     if last_game:
         id = last_game.id + 1
     else:
         id = 1
     title = "Game #{} started".format(id)
     embed = discord.Embed(title=title, description=description)
-    await ctx.send(mentions, embed=embed)
+    message = await ctx.send(mentions, embed=embed)
+    for player_id in team1:
+        try:
+            member = ctx.guild.get_member(player_id)
+            await member.send("Game started: {}".format(message.jump_url))
+        except:
+            pass
+    for player_id in team2:
+        try:
+            member = ctx.guild.get_member(player_id)
+            await member.send("Game started: {}".format(message.jump_url))
+        except:
+            pass
+
 
 
 async def add_player(ctx, player: discord.User):
@@ -73,7 +88,7 @@ async def add_player(ctx, player: discord.User):
         await ctx.send(f"{name} is already in the queue.")
         return
     rating = state.get_conservative_rating(player.id)
-    title = "[{}/{}] {} ({:.2f}) joined the queue.".format(
+    title = "[{}/{}] {} ({}) joined the queue.".format(
         len(state.queue), 2 * state.team_size, name, rating)
     embed = discord.Embed(description=title)
     await ctx.send(embed=embed)
@@ -104,7 +119,7 @@ async def remove_player(ctx, player: discord.User):
         await ctx.send(f"{name} is not in the queue.")
         return
     rating = state.get_conservative_rating(player.id)
-    description = "[{}/{}] {} ({:.2f}) left the queue.".format(
+    description = "[{}/{}] {} ({}) left the queue.".format(
         len(state.queue), 2 * state.team_size, name, rating)
     embed = discord.Embed(description=description)
     await ctx.send(embed=embed)
@@ -146,7 +161,7 @@ async def players(ctx, n: int):
 async def score(ctx, id: int, team: str):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = api.get_game_by_id(id)
+    game = state.api.get_game_by_id(id)
     if not game:
         await ctx.send("This game does not exist.")
         return
@@ -160,7 +175,7 @@ async def score(ctx, id: int, team: str):
         await ctx.send("Score must be 1, 2 or draw.")
         return
     game.score = result
-    api.update_game(game)
+    state.api.update_game(game)
     state.update_players()
 
 
@@ -169,12 +184,12 @@ async def score(ctx, id: int, team: str):
 async def cancelgame(ctx, id: int):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = api.get_game_by_id(id)
+    game = state.api.get_game_by_id(id)
     if not game:
         await ctx.send("This game does not exist.")
         return
     game["score"] = 'C'
-    api.update_game(game)
+    state.api.update_game(game)
     state.update_players()
 
 
@@ -192,7 +207,7 @@ async def leaderboard(ctx, page=1):
     description = ""
     for (i, player) in enumerate(players[start:start+20], start + 1):
         name = player[0]
-        description += "{}: {} - `{:.2f}`\n".format(
+        description += "{}: {} - `{}`\n".format(
             i, name.mention, player[1])
     embed = discord.Embed(
         title=f"Leaderboard ({page}/{pages})", description=description)
@@ -203,7 +218,7 @@ async def leaderboard(ctx, page=1):
 async def queue(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    last_game = api.get_last_game()
+    last_game = state.api.get_last_game()
     if last_game:
         id = last_game.id + 1
     else:
@@ -214,7 +229,7 @@ async def queue(ctx):
     for player_id in state.queue:
         name = ctx.guild.get_member(player_id).mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} ({:.2f})\n".format(name, rating)
+        description += "{} ({})\n".format(name, rating)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
@@ -246,7 +261,7 @@ async def _gameinfo(ctx, game: Game):
 async def lastgame(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = api.get_last_game()
+    game = state.api.get_last_game()
     if not game:
         await ctx.send("No game was played.")
         return
@@ -257,7 +272,7 @@ async def lastgame(ctx):
 async def gameinfo(ctx, id: int):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = api.get_game_by_id(id)
+    game = state.api.get_game_by_id(id)
     if not game:
         await ctx.send("This game does not exist.")
         return
@@ -270,7 +285,7 @@ async def info(ctx, user: discord.User = None):
         return
     if not user:
         user = ctx.author
-    games = api.get_games(user.id)
+    games = state.api.get_games(user.id)
     wins = 0
     losses = 0
     draws = 0
@@ -288,11 +303,11 @@ async def info(ctx, user: discord.User = None):
         elif game.score == "D":
             draws += 1
     rating = state.get_rating(user.id)
-    mu = rating.mu
-    sigma = rating.sigma
+    mu = round(100 * rating.mu)
+    sigma = round(100 * rating.sigma)
     rating = state.get_conservative_rating(user.id)
     title = "{}'s stats".format(user.display_name)
-    description = "Rating: {:.2f} ({:.2f}±{:.2f})\n".format(
+    description = "Rating: {} ({}±{})\n".format(
         rating, mu, sigma)
     description += f"Wins: {wins}\n"
     description += f"Losses: {losses}\n"
@@ -308,7 +323,7 @@ async def gamelist(ctx, user: discord.User = None):
         return
     if user:
         title = "{}'s last games".format(user.display_name)
-        last_games = api.get_games(user.id)[-20:][::-1]
+        last_games = state.api.get_games(user.id)[-20:][::-1]
         description = ""
         for game in last_games:
             result = "undecided"
@@ -329,7 +344,7 @@ async def gamelist(ctx, user: discord.User = None):
             description += "Game #{}: {}\n".format(game.id, result)
     else:
         title = "Last games"
-        last_games = api.get_games()[-20:][::-1]
+        last_games = state.api.get_games()[-20:][::-1]
         description = ""
         for game in last_games:
             result = "undecided"
@@ -350,7 +365,7 @@ async def gamelist(ctx, user: discord.User = None):
 async def stats(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
-    games = api.get_games()
+    games = state.api.get_games()
     total_games = len(games)
     draws = 0
     cancelled = 0
@@ -377,7 +392,7 @@ async def stats(ctx):
 async def swap(ctx, user1: discord.User, user2: discord.User):
     if ctx.channel.id not in state.allowed_channels:
         return
-    game = api.get_last_game()
+    game = state.api.get_last_game()
     if user1.id in game.team1:
         if user2.id in game.team1:
             await ctx.send("These players are on the same team.")
@@ -399,7 +414,7 @@ async def swap(ctx, user1: discord.User, user2: discord.User):
     else:
         await ctx.send("{} is not playing.".format(user1.mention))
         return
-    api.update_game(game)
+    state.api.update_game(game)
     await ctx.send("Players swapped.")
     if game.score in ["1", "2", "D"]:
         state.update_players()

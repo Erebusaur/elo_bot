@@ -39,9 +39,9 @@ class State:
         else:
             return trueskill.Rating()
 
-    def get_conservative_rating(self, player_id: int) -> float:
+    def get_conservative_rating(self, player_id: int) -> int:
         rating = self.get_rating(player_id)
-        return rating.mu - 2 * rating.sigma
+        return round(100 * (rating.mu - 2 * rating.sigma))
 
 
 def update_ratings(players: dict, game: Game) -> None:
