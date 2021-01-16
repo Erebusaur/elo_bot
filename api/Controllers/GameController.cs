@@ -14,7 +14,7 @@ namespace Controllers
     public class GamesController : ControllerBase
     {
 
-        private Game createGame(IEnumerable<Match> matches, float? score, long id)
+        private Game createGame(IEnumerable<Match> matches, float? score, long id, DateTime date)
         {
             char? result = null;
             if (score == 0)
@@ -52,11 +52,14 @@ namespace Controllers
                 Team1 = team1,
                 Team2 = team2,
                 Score = result,
+                Date = date.ToString("u", System.Globalization.CultureInfo.InvariantCulture),
             };
         }
 
         public List<Game> all()
         {
+            using var gameDataContext = new GameDataContext();
+            var gameDatas = gameDataContext.GameDatas;
             using var matchContext = new MatchContext();
             var matchesByGameId = matchContext
                 .Matches
@@ -64,13 +67,15 @@ namespace Controllers
                 .GroupBy(m => m.GameId)
                 .ToDictionary(g => g.Key, g => g.ToList());
             using var scoreContext = new ScoreContext();
-            var scores = scoreContext.Scores;
+            var scores = scoreContext.Scores.ToDictionary(g => g.Id, g => g);
             var games = new List<Game>();
-            foreach (var score in scores)
+            foreach (var gameData in gameDatas)
             {
-                var id = score.GameId;
+                var id = gameData.Id;
+                var score = scores[id];
                 var matches = matchesByGameId[id];
-                games.Add(createGame(matches, score?.Result, id));
+                DateTime date = DateTime.ParseExact(gameData.Date, "u", System.Globalization.CultureInfo.InvariantCulture);
+                games.Add(createGame(matches, score?.Result, id, date));
             }
             return games;
         }
@@ -78,15 +83,18 @@ namespace Controllers
         [HttpGet("{id}")]
         public ActionResult<Game> GetById(int id)
         {
+            using var gameDataContext  = new GameDataContext();
+            var gameData = gameDataContext.GameDatas.Where(x => x.Id == id).FirstOrDefault();
+            if (gameData == null)
+            {
+                return NotFound();
+            }
             using var matchContext = new MatchContext();
             var matches = matchContext.Matches.Where(x => x.GameId == id);
             using var scoreContext = new ScoreContext();
             var score = scoreContext.Scores.Where(x => x.GameId == id).FirstOrDefault();
-            if (matches.Count() == 0)
-            {
-                return NotFound();
-            }
-            return createGame(matches, score?.Result, id);
+            DateTime date = DateTime.ParseExact(gameData.Date, "u", System.Globalization.CultureInfo.InvariantCulture);
+            return createGame(matches, score?.Result, id, date);
         }
 
         [HttpGet]
@@ -114,9 +122,19 @@ namespace Controllers
         [HttpPost]
         public ActionResult<Game> Create(Game game)
         {
+            using var gameDataContext = new GameDataContext();
             using var matchContext = new MatchContext();
-            long id = (matchContext.Matches.Max(m => (int?)m.GameId) ?? 0) + 1;
+            long id = (gameDataContext.GameDatas.Max(m => (int?)m.Id) ?? 0) + 1;
             game.Id = id;
+            if (game.Date == null)
+            {
+                game.Date = DateTime.Now.ToString("u", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            gameDataContext.Add(new GameData {
+                Id = id,
+                Date = game.Date,
+            });
+            gameDataContext.SaveChanges();
             var matches = new List<Match>();
             foreach (var player in game.Team1)
             {
@@ -168,19 +186,56 @@ namespace Controllers
         [HttpPut]
         public ActionResult<Game> Update(Game game)
         {
+            using var gameDataContext = new GameDataContext();
+            var gameData = gameDataContext.GameDatas.Where(g => g.Id == game.Id).SingleOrDefault();
+            gameData.Date = game.Date;
+            gameDataContext.SaveChanges();
             using var matchContext = new MatchContext();
             var matches = matchContext.Matches.Where(m => m.GameId == game.Id);
-            if (matches.Count() == 0)
-            {
-                return NotFound();
-            }
             matchContext.Matches.RemoveRange(matches);
+            foreach (var player in game.Team1)
+            {
+                matchContext.Add(new Match
+                {
+                    GameId = game.Id,
+                    Player = player,
+                    Team = 1,
+                });
+            }
+            foreach (var player in game.Team2)
+            {
+                matchContext.Add(new Match
+                {
+                    GameId = game.Id,
+                    Player = player,
+                    Team = 2,
+                });
+            }
             matchContext.SaveChanges();
             using var scoreContext = new ScoreContext();
             var score = scoreContext.Scores.Where(s => s.GameId == game.Id).Single();
-            scoreContext.Scores.Remove(score);
+            if (game.Score == '1')
+            {
+                score.Result = 1f;
+            }
+            else if (game.Score == '2')
+            {
+                score.Result = 0f;
+            }
+            else if (game.Score == 'D')
+            {
+                score.Result = 0.5f;
+            }
+            else if (game.Score == 'C')
+            {
+                score.Result = -1f;
+            }
+            else
+            {
+                score.Result = null;
+            }
             scoreContext.SaveChanges();
-            return Create(game);
+            return CreatedAtAction(nameof(GetById), new { id = game.Id }, game);
         }
     }
 }

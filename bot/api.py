@@ -35,4 +35,4 @@ class Api:
 
 
 def dict2game(x: dict) -> Game:
-    return Game(x["team1"], x["team2"], x.get("id"), x.get("score"))
+    return Game(x["team1"], x["team2"], x.get("id"), x.get("score"), x.get("date"))

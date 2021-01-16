@@ -245,7 +245,7 @@ async def _gameinfo(ctx, game: Game):
         winner = "draw"
     elif game.score == "C":
         winner = "cancelled"
-    description = "Winner: {}\n\nTeam 1:".format(winner)
+    description = "{}\n\nWinner: {}\n\nTeam 1:".format(game.date[:-1], winner)
     for player in game.team1:
         name = "<@" + str(player) + ">"
         description += "\n{}".format(name)
@@ -304,7 +304,7 @@ async def info(ctx, user: discord.User = None):
             draws += 1
     rating = state.get_rating(user.id)
     mu = round(100 * rating.mu)
-    sigma = round(100 * rating.sigma)
+    sigma = round(200 * rating.sigma)
     rating = state.get_conservative_rating(user.id)
     title = "{}'s stats".format(user.display_name)
     description = "Rating: {} ({}±{})\n".format(

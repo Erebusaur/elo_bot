@@ -5,11 +5,12 @@ cur = conn.cursor()
 
 cur.execute("DROP TABLE IF EXISTS matches;")
 cur.execute("DROP TABLE IF EXISTS scores;")
+cur.execute("DROP TABLE IF EXISTS gamedatas;")
 
 cur.execute("CREATE TABLE IF NOT EXISTS matches(id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, gameid INTEGER NOT NULL, player INTEGER NOT NULL, team INTEGER NOT NULL);")
 cur.execute(
     "CREATE TABLE IF NOT EXISTS scores (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, gameid INTEGER NOT NULL, result REAL);")
-
+cur.execute("CREATE TABLE gamedatas (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, date TEXT);")
 
 def score(result):
     if result == 'W':
@@ -24,6 +25,7 @@ def score(result):
 scores = {}
 with open("data/scores.csv") as scores_file:
     sql_scores = 'INSERT INTO scores (gameid, result) VALUES (?, ?);'
+    sql_gamedatas = 'INSERT INTO gamedatas (id, date) VALUES (?, ?);'
     for line in scores_file:
         if line.startswith('#'):
             continue
@@ -38,6 +40,8 @@ with open("data/scores.csv") as scores_file:
             score = 0.5
         scores[id] = score
         cur.execute(sql_scores, (id, scores[id]))
+        cur.execute(sql_gamedatas, (id, '1970-01-01 00:00:00Z'))
+
 
 
 with open("data/games.csv") as games_file:
