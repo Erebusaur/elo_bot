@@ -1,1 +1,1 @@
-cd api && dotnet run
+cd api && dotnet run > logs.txt

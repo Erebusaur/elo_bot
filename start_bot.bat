@@ -1,1 +1,1 @@
-cd bot && py -3 main.py
+cd bot && py -3 main.py > logs.txt
