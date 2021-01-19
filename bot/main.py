@@ -190,7 +190,7 @@ async def cancelgame(ctx, id: int):
     if not game:
         await ctx.send("This game does not exist.")
         return
-    game["score"] = 'C'
+    game.score = 'C'
     state.api.update_game(game)
     state.update_players()
 
