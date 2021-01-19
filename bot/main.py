@@ -48,20 +48,18 @@ async def start_game(ctx):
         member = ctx.guild.get_member(player_id)
         name = member.mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} {}\n".format(name, rating)
+        # description += "{} {}\n".format(name, rating)
+        description += f"{name}\n"
         mentions += "{} ".format(name)
     description += "\nTeam 2:\n"
     for player_id in team2:
         member = ctx.guild.get_member(player_id)
         name = member.mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} {}\n".format(name, rating)
+        # description += "{} {}\n".format(name, rating)
+        description += f"{name}\n"
         mentions += "{} ".format(name)
-    last_game = state.api.get_last_game()
-    if last_game:
-        id = last_game.id + 1
-    else:
-        id = 1
+    id = state.api.get_last_game().id
     title = "Game #{} started".format(id)
     embed = discord.Embed(title=title, description=description)
     message = await ctx.send(mentions, embed=embed)
@@ -88,8 +86,10 @@ async def add_player(ctx, player: discord.User):
         await ctx.send(f"{name} is already in the queue.")
         return
     rating = state.get_conservative_rating(player.id)
-    title = "[{}/{}] {} ({}) joined the queue.".format(
-        len(state.queue), 2 * state.team_size, name, rating)
+    # title = "[{}/{}] {} ({}) joined the queue.".format(
+    #     len(state.queue), 2 * state.team_size, name, rating)
+    title = "[{}/{}] {} joined the queue.".format(
+        len(state.queue), 2 * state.team_size, name)
     embed = discord.Embed(description=title)
     await ctx.send(embed=embed)
     if len(state.queue) == 2 * state.team_size:
@@ -119,8 +119,10 @@ async def remove_player(ctx, player: discord.User):
         await ctx.send(f"{name} is not in the queue.")
         return
     rating = state.get_conservative_rating(player.id)
-    description = "[{}/{}] {} ({}) left the queue.".format(
-        len(state.queue), 2 * state.team_size, name, rating)
+    # description = "[{}/{}] {} ({}) left the queue.".format(
+    #     len(state.queue), 2 * state.team_size, name, rating)
+    description = "[{}/{}] {} left the queue.".format(
+        len(state.queue), 2 * state.team_size, name)
     embed = discord.Embed(description=description)
     await ctx.send(embed=embed)
     if len(state.queue) == 2 * state.team_size:
@@ -177,6 +179,7 @@ async def score(ctx, id: int, team: str):
     game.score = result
     state.api.update_game(game)
     state.update_players()
+    await ctx.send(f"Game {id} updated.")
 
 
 @bot.command(aliases=['cancel'])
@@ -194,6 +197,7 @@ async def cancelgame(ctx, id: int):
 
 
 @bot.command(aliases=['lb'])
+@commands.has_any_role('Scrim Organiser', 'Moderator')
 async def leaderboard(ctx, page=1):
     if ctx.channel.id not in state.allowed_channels:
         return
@@ -229,7 +233,8 @@ async def queue(ctx):
     for player_id in state.queue:
         name = ctx.guild.get_member(player_id).mention
         rating = state.get_conservative_rating(player_id)
-        description += "{} ({})\n".format(name, rating)
+        # description += "{} ({})\n".format(name, rating)
+        description += "{}\n".format(name)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
 
@@ -280,6 +285,7 @@ async def gameinfo(ctx, id: int):
 
 
 @bot.command()
+@commands.has_any_role('Scrim Organiser', 'Moderator')
 async def info(ctx, user: discord.User = None):
     if ctx.channel.id not in state.allowed_channels:
         return
