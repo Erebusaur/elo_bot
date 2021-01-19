@@ -77,7 +77,6 @@ async def start_game(ctx):
             pass
 
 
-
 async def add_player(ctx, player: discord.User):
     name = player.mention
     try:
@@ -202,8 +201,8 @@ async def leaderboard(ctx, page=1):
     if ctx.channel.id not in state.allowed_channels:
         return
     players = list(
-        filter(lambda x: x[0], map(lambda x: (ctx.guild.get_member(x), state.get_conservative_rating(x)), state.players.keys())))
-    players = sorted(players, key=lambda x: -x[1])
+        filter(lambda x: x[0], map(lambda x: (ctx.guild.get_member(x), state.get_rating(x)), state.players.keys())))
+    players = sorted(players, key=lambda x: -(x[1].mu - 2 * x[1].sigma))
     pages = math.ceil(len(players) / 20)
     if page > pages:
         return
@@ -211,8 +210,11 @@ async def leaderboard(ctx, page=1):
     description = ""
     for (i, player) in enumerate(players[start:start+20], start + 1):
         name = player[0]
-        description += "{}: {} - `{}`\n".format(
-            i, name.mention, player[1])
+        rating = round(100 * (player[1].mu - 2 * player[1].sigma))
+        mu = round(100 * player[1].mu)
+        sigma = round(200 * player[1].sigma)
+        description += "{}: {} - **{}** ({} ± {})\n".format(
+            i, name.mention, rating, mu, sigma)
     embed = discord.Embed(
         title=f"Leaderboard ({page}/{pages})", description=description)
     await ctx.send(embed=embed)
