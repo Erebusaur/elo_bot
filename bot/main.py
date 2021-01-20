@@ -428,8 +428,11 @@ async def swap(ctx, user1: discord.User, user2: discord.User):
         state.update_players()
 
 
-def get_name(user_id):
-    return "<@" + str(user_id) + ">"
+@bot.command(aliases=['clear', 'clearq'])
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def clearqueue(ctx):
+    state.queue = set()
+    await ctx.send("Queue cleared")
 
 
 load_dotenv()
