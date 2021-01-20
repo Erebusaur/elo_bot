@@ -11,6 +11,7 @@ class State:
         self.players = {}
         self.queue = set()
         self.team_size = 4
+        self.frozen = False
         self.allowed_channels = [753208659865108561,
                                  790660886242787369, 739093044346748948]
 

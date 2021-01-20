@@ -99,6 +99,9 @@ async def add_player(ctx, player: discord.User):
 async def join(ctx):
     if ctx.channel.id not in state.allowed_channels:
         return
+    if state.frozen:
+        await ctx.send("The queue is frozen.")
+        return
     await add_player(ctx, ctx.author)
 
 
@@ -131,6 +134,9 @@ async def remove_player(ctx, player: discord.User):
 @bot.command(aliases=['l'])
 async def leave(ctx):
     if ctx.channel.id not in state.allowed_channels:
+        return
+    if state.frozen:
+        await ctx.send("The queue is frozen.")
         return
     await remove_player(ctx, ctx.author)
 
@@ -390,7 +396,7 @@ async def stats(ctx):
     description += "Games played: {}\n".format(
         total_games - cancelled - ongoing)
     description += "Cancelled games: {}\n".format(cancelled)
-    description += "Ongoing games: {}\n".format(ongoing)
+    description += "Undecided games: {}\n".format(ongoing)
     # description += "Draws: {}\n".format(draws)
     embed = discord.Embed(title=title, description=description)
     await ctx.send(embed=embed)
@@ -432,8 +438,19 @@ async def swap(ctx, user1: discord.User, user2: discord.User):
 @commands.has_any_role('Scrim Organiser', 'Moderator')
 async def clearqueue(ctx):
     state.queue = set()
-    await ctx.send("Queue cleared")
+    await ctx.send("Queue cleared.")
 
+@bot.command()
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def freeze(ctx):
+    state.frozen = True
+    await ctx.send("Queue frozen.")
+
+@bot.command()
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def unfreeze(ctx):
+    state.frozen = False
+    await ctx.send("Queue unfrozen.")
 
 load_dotenv()
 api = Api("http://localhost:5000")
