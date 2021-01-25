@@ -23,12 +23,8 @@ async def on_ready():
     pass
 
 
-async def start_game(ctx):
-    if ctx.channel.id not in state.allowed_channels:
-        return
-    queue = list(state.queue)
-    state.queue = set()
-    size = state.team_size
+def balance(queue):
+    size = len(queue) // 2
     best_score = 0
     best_teams = None
     for team1 in itertools.combinations(queue[1:], size - 1):
@@ -40,7 +36,14 @@ async def start_game(ctx):
         if score > best_score:
             best_score = score
             best_teams = (team1, team2)
-    team1, team2 = best_teams
+    return best_teams
+
+async def start_game(ctx):
+    if ctx.channel.id not in state.allowed_channels:
+        return
+    queue = list(state.queue)
+    state.queue = set()
+    team1, team2 = balance(queue)
     state.api.create_game(Game(team1, team2))
     mentions = ""
     description = "Team 1:\n"
@@ -75,6 +78,35 @@ async def start_game(ctx):
             await member.send("Game started: {}".format(message.jump_url))
         except:
             pass
+
+@bot.command()
+@commands.has_any_role('Scrim Organiser', 'Moderator')
+async def rebalance(ctx):
+    game = api.get_last_game()
+    if not game:
+        return
+    team1, team2 = balance(game.team1 + game.team2)
+    game.team1 = team1
+    game.team2 = team2
+    api.update_game(game)
+    title = "Game #{}".format(game.id)
+    description = "Team 1:\n"
+    for player_id in team1:
+        member = ctx.guild.get_member(player_id)
+        name = member.mention
+        # rating = state.get_conservative_rating(player_id)
+        # description += "{} {}\n".format(name, rating)
+        description += f"{name}\n"
+    description += "\nTeam 2:\n"
+    for player_id in team2:
+        member = ctx.guild.get_member(player_id)
+        name = member.mention
+        # rating = state.get_conservative_rating(player_id)
+        # description += "{} {}\n".format(name, rating)
+        description += f"{name}\n"
+    embed = discord.Embed(title=title, description=description)
+    await ctx.send(embed=embed)
+
 
 
 async def add_player(ctx, player: discord.User):
